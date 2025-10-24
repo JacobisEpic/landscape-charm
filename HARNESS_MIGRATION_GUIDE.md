@@ -1,6 +1,7 @@
 # Harness to State-Transition Migration Guide
 
 This guide provides step-by-step instructions for migrating your `test_charm.py` file from Harness to state-transition tests.
+https://documentation.ubuntu.com/ops/latest/howto/legacy/migrate-unit-tests-from-harness/#harness-migration
 
 ## Why Migrate?
 
