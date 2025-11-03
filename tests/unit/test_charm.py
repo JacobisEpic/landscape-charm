@@ -1530,6 +1530,34 @@ class TestCharm(unittest.TestCase):
         )
         self.assertIsInstance(self.harness.charm.unit.status, BlockedStatus)
 
+    def test_action_validate_config_valid(self):
+        """Test validate-config action with valid configuration."""
+        event = Mock(spec_set=ActionEvent)
+
+        # Default config should be valid
+        self.harness.charm._validate_config(event)
+
+        event.set_results.assert_called_once()
+        results = event.set_results.call_args[0][0]
+        self.assertTrue(results["valid"])
+        self.assertEqual(results["message"], "Configuration is valid")
+        event.fail.assert_not_called()
+
+    def test_action_validate_config_invalid(self):
+        """Test validate-config action with invalid configuration."""
+        event = Mock(spec_set=ActionEvent)
+
+        # Set invalid config - missing openid_logout_url
+        self.harness.update_config({"openid_provider_url": "https://test.com"})
+
+        self.harness.charm._validate_config(event)
+
+        event.set_results.assert_called_once()
+        results = event.set_results.call_args[0][0]
+        self.assertFalse(results["valid"])
+        self.assertIn("__root__", results["message"])
+        event.fail.assert_called_once()
+
     def test_nrpe_external_master_relation_joined(self):
         mock_event = Mock()
         mock_event.relation.data = {self.harness.charm.unit: {}}

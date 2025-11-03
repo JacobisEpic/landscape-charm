@@ -33,3 +33,8 @@ disable-ubuntu-installer-attach:
   description: |
     Uninstall the `landscape_ubuntu_installer_attach` package and remove the
     frontend on HAProxy.
+validate-config:
+  description: |
+    Validate the current charm configuration without applying it. Returns
+    validation results indicating whether the configuration is valid and
+    lists any errors found.

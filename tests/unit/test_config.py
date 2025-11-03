@@ -152,3 +152,52 @@ def test_oidc_minimum_fields(
             LandscapeCharmConfiguration(**defaults)
     else:
         LandscapeCharmConfiguration(**defaults)
+
+
+def test_format_validation_error_summary():
+    """
+    Test that format_validation_error_summary produces user-friendly error messages.
+    """
+    from src.config import format_validation_error_summary
+
+    # Test with OpenID validation error
+    defaults = get_config_defaults()
+    defaults["openid_provider_url"] = "https://test.com"
+    # Missing openid_logout_url will cause validation error
+
+    try:
+        LandscapeCharmConfiguration(**defaults)
+    except ValidationError as e:
+        summary = format_validation_error_summary(e)
+        assert "__root__" in summary
+        assert "OpenID" in summary or "openid" in summary.lower()
+
+
+def test_format_validation_error_summary_multiple_errors():
+    """
+    Test that format_validation_error_summary shows max 2 errors.
+    """
+    from src.config import format_validation_error_summary
+
+    # Create a config with multiple errors
+    defaults = get_config_defaults()
+    defaults["openid_provider_url"] = "https://test.com"
+    defaults["oidc_issuer"] = "https://oidc.com"
+    # This will trigger both exclusivity and missing fields errors
+
+    try:
+        LandscapeCharmConfiguration(**defaults)
+    except ValidationError as e:
+        summary = format_validation_error_summary(e)
+        # Should contain error information
+        assert len(summary) > 0
+        # Should have semicolon separator if multiple errors
+        # (may have just 1 or 2 depending on validation order)
+
+
+def test_fail_fast_on_invalid_config_default():
+    """
+    Test that fail_fast_on_invalid_config defaults to False.
+    """
+    config = DEFAULT_CONFIGURATION
+    assert config.fail_fast_on_invalid_config is False

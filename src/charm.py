@@ -59,7 +59,12 @@ from ops.model import (
 from pydantic import ValidationError
 import yaml
 
-from config import DEFAULT_CONFIGURATION, LandscapeCharmConfiguration, RedirectHTTPS
+from config import (
+    DEFAULT_CONFIGURATION,
+    format_validation_error_summary,
+    LandscapeCharmConfiguration,
+    RedirectHTTPS,
+)
 from database import (
     DatabaseConnectionContext,
     fetch_postgres_relation_data,
@@ -332,6 +337,7 @@ class LandscapeServerCharm(CharmBase):
         self.framework.observe(
             self.on.migrate_service_conf_action, self._migrate_service_conf
         )
+        self.framework.observe(self.on.validate_config_action, self._validate_config)
 
         # State
         self._stored.set_default(
@@ -366,10 +372,17 @@ class LandscapeServerCharm(CharmBase):
             self.charm_config = LandscapeCharmConfiguration.validate(self.model.config)
         except ValidationError as e:
             logger.error(f"Invalid configuration: {e.errors()}")
-            self.charm_config = DEFAULT_CONFIGURATION
-            self.unit.status = BlockedStatus(
-                "Invalid configuration. See `juju debug-log`."
-            )
+            error_summary = format_validation_error_summary(e)
+            # Check if fail-fast is enabled in raw config (can't use charm_config yet)
+            fail_fast = self.model.config.get("fail_fast_on_invalid_config", False)
+            if fail_fast:
+                # Don't fallback to defaults when fail-fast is enabled
+                self.charm_config = None
+                self.unit.status = BlockedStatus(f"Config errors: {error_summary}")
+            else:
+                # Fallback to defaults (current behavior)
+                self.charm_config = DEFAULT_CONFIGURATION
+                self.unit.status = BlockedStatus(f"Config errors: {error_summary}")
 
     def _generate_scrape_configs(self) -> list[dict]:
         """
@@ -398,9 +411,8 @@ class LandscapeServerCharm(CharmBase):
             self.unit.status = WaitingStatus("Configuration validated...")
         except ValidationError as e:
             logger.error(f"Invalid configuration: {e.errors()}")
-            self.unit.status = BlockedStatus(
-                "Invalid configuration. See `juju debug-log`."
-            )
+            error_summary = format_validation_error_summary(e)
+            self.unit.status = BlockedStatus(f"Config errors: {error_summary}")
             return
 
         try:
@@ -1642,6 +1654,27 @@ command[check_{service}]=/usr/local/lib/nagios/plugins/check_systemd.py {service
 
     def _migrate_service_conf(self, event: ActionEvent) -> None:
         migrate_service_conf()
+
+    def _validate_config(self, event: ActionEvent) -> None:
+        """
+        Validate the current charm configuration and report results.
+        """
+        try:
+            LandscapeCharmConfiguration.validate(self.model.config)
+            event.set_results({"valid": True, "message": "Configuration is valid"})
+        except ValidationError as e:
+            errors = e.errors()
+            error_summary = format_validation_error_summary(e)
+            # Create a detailed error list for the action result
+            error_details = [f"{err['loc'][0]}: {err['msg']}" for err in errors]
+            event.set_results(
+                {
+                    "valid": False,
+                    "message": error_summary,
+                    "errors": "\n".join(error_details),
+                }
+            )
+            event.fail(f"Configuration validation failed: {error_summary}")
 
     def _configure_ubuntu_installer_attach(self, enable: bool) -> None:
         """

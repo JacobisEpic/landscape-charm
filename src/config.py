@@ -68,6 +68,7 @@ class LandscapeCharmConfiguration(BaseModel):
     redirect_https: RedirectHTTPS
     enable_hostagent_messenger: bool
     enable_ubuntu_installer_attach: bool
+    fail_fast_on_invalid_config: bool
 
     @root_validator(skip_on_failure=True)
     def openid_oidc_exclusive(cls, values):
@@ -144,3 +145,28 @@ DEFAULT_CONFIGURATION = LandscapeCharmConfiguration.validate(get_config_defaults
 A `LandscapeCharmConfiguration` populated with the defaults, for use as a fallback
 when the charm is deployed with invalid configuration.
 """
+
+
+def format_validation_error_summary(validation_error) -> str:
+    """
+    Format a Pydantic ValidationError into a user-friendly summary.
+
+    Returns a concise error summary showing the first 2 field errors,
+    suitable for display in charm status messages.
+
+    Args:
+        validation_error: A Pydantic ValidationError instance
+
+    Returns:
+        A formatted string like "field1: error message; field2: error message"
+    """
+    errors = validation_error.errors()
+    field_errors = []
+    for err in errors[:2]:  # Show only first 2 errors
+        # Get the field name from the location tuple
+        field = err["loc"][0] if err["loc"] else "unknown"
+        # Get the error message
+        msg = err["msg"]
+        field_errors.append(f"{field}: {msg}")
+
+    return "; ".join(field_errors)
