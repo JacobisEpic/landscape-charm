@@ -177,14 +177,30 @@ def get_args_with_secrets_removed(args, arg_names):
     Returns a copy of the args passed in with secrets associated with arg_names
     redacted.
     """
-    args = args.copy()
-    for arg_name in arg_names:
-        dash_arg_name = "--" + arg_name
-        if dash_arg_name in args:
-            idx = args.index(dash_arg_name) + 1
-            if idx < len(args):
-                args[idx] = "REDACTED"
-    return args
+    if not args:
+        return []
+    
+    secret_flags = {f"--{name}" for name in arg_names}
+    result = []
+    
+    # Create pairs of (current_arg, next_arg) using zip with offset
+    # Add None as sentinel for the last argument
+    arg_pairs = list(zip(args, args[1:] + [None]))
+    
+    skip_next = False
+    for i, (current_arg, next_arg) in enumerate(arg_pairs):
+        if skip_next:
+            skip_next = False
+            continue
+            
+        result.append(current_arg)
+        
+        # If this is a secret flag and there's a next argument, redact it
+        if current_arg in secret_flags and next_arg is not None:
+            result.append("REDACTED")
+            skip_next = True
+    
+    return result
 
 
 def _get_ssl_cert(ssl_cert, ssl_key):

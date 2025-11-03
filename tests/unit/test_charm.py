@@ -30,6 +30,7 @@ from ops.testing import (
 
 from charm import (
     DEFAULT_SERVICES,
+    get_args_with_secrets_removed,
     get_modified_env_vars,
     HASH_ID_DATABASES,
     LANDSCAPE_PACKAGES,
@@ -1917,3 +1918,161 @@ class TestGetModifiedEnvVars(unittest.TestCase):
         self.assertNotIn("/var/lib/juju/python3", modified)
         self.assertNotIn("/usr/lib/juju/python3.10", modified)
         self.assertIn("/usr/lib/python3", modified)
+
+
+class TestGetArgsWithSecretsRemoved(unittest.TestCase):
+    """Tests for the get_args_with_secrets_removed utility function."""
+
+    def test_no_secrets_no_change(self):
+        """Test that args without secrets are returned unchanged."""
+        args = ["--host", "localhost", "--port", "8080", "--verbose"]
+        secret_args = ["password", "token"]
+        
+        result = get_args_with_secrets_removed(args, secret_args)
+        
+        self.assertEqual(result, args)
+        # Ensure original is not modified
+        self.assertEqual(args, ["--host", "localhost", "--port", "8080", "--verbose"])
+
+    def test_single_secret_redacted(self):
+        """Test that a single secret argument is properly redacted."""
+        args = ["--host", "localhost", "--password", "secret123", "--port", "8080"]
+        secret_args = ["password"]
+        
+        result = get_args_with_secrets_removed(args, secret_args)
+        
+        expected = ["--host", "localhost", "--password", "REDACTED", "--port", "8080"]
+        self.assertEqual(result, expected)
+
+    def test_multiple_secrets_redacted(self):
+        """Test that multiple secret arguments are properly redacted."""
+        args = [
+            "--host", "localhost", 
+            "--password", "secret123", 
+            "--token", "abc123", 
+            "--port", "8080"
+        ]
+        secret_args = ["password", "token"]
+        
+        result = get_args_with_secrets_removed(args, secret_args)
+        
+        expected = [
+            "--host", "localhost", 
+            "--password", "REDACTED", 
+            "--token", "REDACTED", 
+            "--port", "8080"
+        ]
+        self.assertEqual(result, expected)
+
+    def test_secret_flag_without_value(self):
+        """Test handling of secret flag without a value (at end of args)."""
+        args = ["--host", "localhost", "--password"]
+        secret_args = ["password"]
+        
+        result = get_args_with_secrets_removed(args, secret_args)
+        
+        expected = ["--host", "localhost", "--password"]
+        self.assertEqual(result, expected)
+
+    def test_duplicate_secret_flags(self):
+        """Test handling of duplicate secret flags."""
+        args = [
+            "--password", "first_secret", 
+            "--host", "localhost", 
+            "--password", "second_secret"
+        ]
+        secret_args = ["password"]
+        
+        result = get_args_with_secrets_removed(args, secret_args)
+        
+        expected = [
+            "--password", "REDACTED", 
+            "--host", "localhost", 
+            "--password", "REDACTED"
+        ]
+        self.assertEqual(result, expected)
+
+    def test_empty_args(self):
+        """Test handling of empty arguments list."""
+        args = []
+        secret_args = ["password", "token"]
+        
+        result = get_args_with_secrets_removed(args, secret_args)
+        
+        self.assertEqual(result, [])
+
+    def test_empty_secret_args(self):
+        """Test handling of empty secret arguments list."""
+        args = ["--host", "localhost", "--password", "secret123"]
+        secret_args = []
+        
+        result = get_args_with_secrets_removed(args, secret_args)
+        
+        self.assertEqual(result, args)
+
+    def test_secret_flag_mixed_with_non_secret(self):
+        """Test secret flag followed by another flag (edge case)."""
+        args = ["--password", "--host", "localhost"]
+        secret_args = ["password"]
+        
+        result = get_args_with_secrets_removed(args, secret_args)
+        
+        # --host should be treated as the value for --password and redacted
+        # Then "localhost" remains as it's the next argument
+        expected = ["--password", "REDACTED", "localhost"]
+        self.assertEqual(result, expected)
+
+    def test_secret_args_case_sensitivity(self):
+        """Test that secret argument matching is case sensitive."""
+        args = ["--Password", "secret123", "--password", "secret456"]
+        secret_args = ["password"]  # lowercase
+        
+        result = get_args_with_secrets_removed(args, secret_args)
+        
+        # Only --password (lowercase) should be redacted
+        expected = ["--Password", "secret123", "--password", "REDACTED"]
+        self.assertEqual(result, expected)
+
+    def test_real_world_scenario(self):
+        """Test a realistic command-line scenario."""
+        args = [
+            "landscape-schema", 
+            "--host", "db.example.com", 
+            "--port", "5432", 
+            "--user", "landscape", 
+            "--password", "very_secret_password",
+            "--database", "landscape",
+            "--ssl-cert-path", "/path/to/cert.pem",
+            "--api-key", "api_secret_key_123",
+            "--verbose"
+        ]
+        secret_args = ["password", "api-key"]
+        
+        result = get_args_with_secrets_removed(args, secret_args)
+        
+        expected = [
+            "landscape-schema", 
+            "--host", "db.example.com", 
+            "--port", "5432", 
+            "--user", "landscape", 
+            "--password", "REDACTED",
+            "--database", "landscape",
+            "--ssl-cert-path", "/path/to/cert.pem",
+            "--api-key", "REDACTED",
+            "--verbose"
+        ]
+        self.assertEqual(result, expected)
+
+    def test_original_args_not_modified(self):
+        """Test that the original args list is never modified."""
+        original_args = ["--password", "secret123", "--host", "localhost"]
+        args_copy = original_args.copy()
+        secret_args = ["password"]
+        
+        result = get_args_with_secrets_removed(original_args, secret_args)
+        
+        # Original should be unchanged
+        self.assertEqual(original_args, args_copy)
+        # Result should be different
+        self.assertNotEqual(result, original_args)
+        self.assertEqual(result, ["--password", "REDACTED", "--host", "localhost"])
