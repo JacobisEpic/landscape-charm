@@ -6,7 +6,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, root_validator
+from pydantic import BaseModel, root_validator, ValidationError
 import yaml
 
 
@@ -147,7 +147,7 @@ when the charm is deployed with invalid configuration.
 """
 
 
-def format_validation_error_summary(validation_error) -> str:
+def format_validation_error_summary(validation_error: ValidationError) -> str:
     """
     Format a Pydantic ValidationError into a user-friendly summary.
 

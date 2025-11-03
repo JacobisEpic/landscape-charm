@@ -359,15 +359,6 @@ class LandscapeServerCharm(CharmBase):
 
         self.root_gid = group_exists("root").gr_gid
 
-        self._grafana_agent = COSAgentProvider(
-            self,
-            scrape_configs=self._generate_scrape_configs,
-            metrics_rules_dir=METRICS_RULES_DIR,
-            refresh_events=[
-                self.on.config_changed,
-                self.on.upgrade_charm,
-            ],
-        )
         try:
             self.charm_config = LandscapeCharmConfiguration.validate(self.model.config)
         except ValidationError as e:
@@ -383,6 +374,16 @@ class LandscapeServerCharm(CharmBase):
                 # Fallback to defaults (current behavior)
                 self.charm_config = DEFAULT_CONFIGURATION
                 self.unit.status = BlockedStatus(f"Config errors: {error_summary}")
+
+        self._grafana_agent = COSAgentProvider(
+            self,
+            scrape_configs=self._generate_scrape_configs,
+            metrics_rules_dir=METRICS_RULES_DIR,
+            refresh_events=[
+                self.on.config_changed,
+                self.on.upgrade_charm,
+            ],
+        )
 
     def _generate_scrape_configs(self) -> list[dict]:
         """
