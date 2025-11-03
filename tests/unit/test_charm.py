@@ -595,6 +595,74 @@ class TestCharm(unittest.TestCase):
             },
         )
 
+    def test_init_with_invalid_config_shows_specific_errors(self):
+        """Test that initialization with invalid config shows specific field errors."""
+        # Create a new harness with invalid config
+        harness = Harness(LandscapeServerCharm)
+        harness.update_config(
+            {
+                "openid_provider_url": "https://test.com",
+                # Missing openid_logout_url will cause validation error
+            }
+        )
+
+        # Mock the dependencies
+        pwd_mock = patch("charm.user_exists").start()
+        pwd_mock.return_value = Mock(spec_set=struct_passwd, pw_uid=1000)
+        grp_mock = patch("charm.group_exists").start()
+        grp_mock.return_value = Mock(spec_set=struct_group, gr_gid=1000)
+
+        patch("charm.service_pause").start()
+        patch("charm.service_reload").start()
+        patch("charm.service_resume").start()
+        patch("charm.service_running").start()
+
+        harness.begin()
+
+        # Check that the status includes specific field error
+        status = harness.charm.unit.status
+        self.assertIsInstance(status, BlockedStatus)
+        self.assertIn("Config errors:", status.message)
+        self.assertIn("__root__", status.message)
+
+        patch.stopall()
+        harness.cleanup()
+
+    def test_init_with_fail_fast_enabled(self):
+        """Test that fail-fast mode prevents fallback to defaults."""
+        harness = Harness(LandscapeServerCharm)
+        harness.update_config(
+            {
+                "openid_provider_url": "https://test.com",
+                "fail_fast_on_invalid_config": True,
+                # Missing openid_logout_url will cause validation error
+            }
+        )
+
+        # Mock the dependencies
+        pwd_mock = patch("charm.user_exists").start()
+        pwd_mock.return_value = Mock(spec_set=struct_passwd, pw_uid=1000)
+        grp_mock = patch("charm.group_exists").start()
+        grp_mock.return_value = Mock(spec_set=struct_group, gr_gid=1000)
+
+        patch("charm.service_pause").start()
+        patch("charm.service_reload").start()
+        patch("charm.service_resume").start()
+        patch("charm.service_running").start()
+
+        harness.begin()
+
+        # Check that charm_config is None when fail-fast is enabled
+        self.assertIsNone(harness.charm.charm_config)
+
+        # Check that status shows the error
+        status = harness.charm.unit.status
+        self.assertIsInstance(status, BlockedStatus)
+        self.assertIn("Config errors:", status.message)
+
+        patch.stopall()
+        harness.cleanup()
+
     def test_install(self):
         harness = Harness(LandscapeServerCharm)
         relation_id = harness.add_relation("replicas", "landscape-server")
