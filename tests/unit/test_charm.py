@@ -30,6 +30,7 @@ from ops.testing import (
 
 from charm import (
     DEFAULT_SERVICES,
+    get_args_with_secrets_removed,
     get_modified_env_vars,
     HASH_ID_DATABASES,
     LANDSCAPE_PACKAGES,
@@ -1917,3 +1918,187 @@ class TestGetModifiedEnvVars(unittest.TestCase):
         self.assertNotIn("/var/lib/juju/python3", modified)
         self.assertNotIn("/usr/lib/juju/python3.10", modified)
         self.assertIn("/usr/lib/python3", modified)
+
+
+class TestMigrateSchemaAction(unittest.TestCase):
+    """Tests for improved migrate-schema action error handling."""
+
+    def setUp(self):
+        """Set up test harness."""
+        self.harness = Harness(LandscapeServerCharm)
+        self.addCleanup(self.harness.cleanup)
+        self.harness.begin()
+        self.harness.charm._stored.running = False
+
+    @patch("charm.subprocess.run")
+    @patch("os.path.exists")
+    def test_migrate_schema_success_with_output(self, mock_exists, mock_run):
+        """Test successful schema migration with captured output."""
+        mock_exists.return_value = True
+        mock_result = Mock()
+        mock_result.stdout = "Schema migration completed successfully\nApplied 3 migrations"
+        mock_result.stderr = ""
+        mock_run.return_value = mock_result
+        
+        # Add database relation
+        self.harness.add_relation("database", "postgresql")
+        
+        event = Mock(spec_set=ActionEvent)
+        self.harness.charm._migrate_schema(event)
+
+        # Verify successful execution
+        mock_run.assert_called_once()
+        call_args = mock_run.call_args
+        self.assertEqual(call_args[0][0], [SCHEMA_SCRIPT])
+        self.assertTrue(call_args[1]["capture_output"])
+        event.log.assert_called()
+        event.fail.assert_not_called()
+
+    @patch("charm.subprocess.run")
+    @patch("os.path.exists")
+    def test_migrate_schema_failure_with_detailed_error(self, mock_exists, mock_run):
+        """Test schema migration failure with detailed error reporting."""
+        mock_exists.return_value = True
+        error = CalledProcessError(1, [SCHEMA_SCRIPT])
+        error.stdout = "Connecting to database..."
+        error.stderr = "ERROR: permission denied for database landscape"
+        mock_run.side_effect = error
+        
+        # Add database relation
+        self.harness.add_relation("database", "postgresql")
+
+        event = Mock(spec_set=ActionEvent)
+        self.harness.charm._migrate_schema(event)
+
+        # Verify detailed error message
+        event.fail.assert_called_once()
+        error_message = event.fail.call_args[0][0]
+        self.assertIn("Schema migration failed with exit code 1", error_message)
+        self.assertIn("Output: Connecting to database...", error_message)
+        self.assertIn("Error: ERROR: permission denied", error_message)
+        self.assertIn("Troubleshooting: Check database user permissions", error_message)
+
+    @patch("os.path.exists")
+    def test_migrate_schema_missing_script(self, mock_exists):
+        """Test migration failure when schema script is missing."""
+        mock_exists.return_value = False
+        
+        # Add database relation
+        self.harness.add_relation("database", "postgresql")
+
+        event = Mock(spec_set=ActionEvent)
+        self.harness.charm._migrate_schema(event)
+
+        event.fail.assert_called_once()
+        error_message = event.fail.call_args[0][0]
+        self.assertIn("Schema script not found", error_message)
+
+    @patch("os.path.exists")
+    def test_migrate_schema_no_database_relation(self, mock_exists):
+        """Test migration failure when no database relation exists."""
+        mock_exists.return_value = True
+
+        event = Mock(spec_set=ActionEvent)
+        self.harness.charm._migrate_schema(event)
+
+        event.fail.assert_called_once()
+        error_message = event.fail.call_args[0][0]
+        self.assertIn("No database relation found", error_message)
+
+    def test_migrate_schema_while_running(self):
+        """Test migration failure when services are running."""
+        self.harness.charm._stored.running = True
+
+        event = Mock(spec_set=ActionEvent)
+        self.harness.charm._migrate_schema(event)
+
+        event.fail.assert_called_once()
+        error_message = event.fail.call_args[0][0]
+        self.assertIn("Cannot migrate schema while running", error_message)
+
+    @patch("charm.subprocess.run")
+    @patch("os.path.exists")
+    def test_migrate_schema_connection_error(self, mock_exists, mock_run):
+        """Test connection error troubleshooting hints."""
+        mock_exists.return_value = True
+        error = CalledProcessError(1, [SCHEMA_SCRIPT])
+        error.stderr = "could not connect to server: Connection refused"
+        mock_run.side_effect = error
+        
+        # Add database relation
+        self.harness.add_relation("database", "postgresql")
+
+        event = Mock(spec_set=ActionEvent)
+        self.harness.charm._migrate_schema(event)
+
+        event.fail.assert_called_once()
+        error_message = event.fail.call_args[0][0]
+        self.assertIn("Verify database relation is active", error_message)
+
+    @patch("charm.subprocess.run")
+    @patch("os.path.exists")
+    def test_migrate_schema_authentication_error(self, mock_exists, mock_run):
+        """Test authentication error troubleshooting hints."""
+        mock_exists.return_value = True
+        error = CalledProcessError(1, [SCHEMA_SCRIPT])
+        error.stderr = "FATAL: authentication failed for user landscape"
+        mock_run.side_effect = error
+        
+        # Add database relation
+        self.harness.add_relation("database", "postgresql")
+
+        event = Mock(spec_set=ActionEvent)
+        self.harness.charm._migrate_schema(event)
+
+        event.fail.assert_called_once()
+        error_message = event.fail.call_args[0][0]
+        self.assertIn("Check database credentials in relation data", error_message)
+
+
+class TestMigrateSchemaBootstrap(unittest.TestCase):
+    """Tests for improved _migrate_schema_bootstrap error handling."""
+
+    def setUp(self):
+        """Set up test harness."""
+        self.harness = Harness(LandscapeServerCharm)
+        self.addCleanup(self.harness.cleanup)
+        self.harness.begin()
+
+    @patch("charm.subprocess.run")
+    def test_migrate_schema_bootstrap_success(self, mock_run):
+        """Test successful bootstrap with logging."""
+        mock_result = Mock()
+        mock_result.stdout = "Bootstrap completed successfully"
+        mock_result.stderr = ""
+        mock_run.return_value = mock_result
+
+        result = self.harness.charm._migrate_schema_bootstrap()
+
+        self.assertTrue(result)
+        mock_run.assert_called_once()
+
+    @patch("charm.subprocess.run")
+    def test_migrate_schema_bootstrap_permission_error(self, mock_run):
+        """Test bootstrap permission error with specific status."""
+        error = CalledProcessError(1, [SCHEMA_SCRIPT, "--bootstrap"])
+        error.stderr = "ERROR: permission denied for schema landscape"
+        mock_run.side_effect = error
+
+        result = self.harness.charm._migrate_schema_bootstrap()
+
+        self.assertFalse(result)
+        self.assertIsInstance(self.harness.charm.unit.status, BlockedStatus)
+        self.assertIn("permission error", self.harness.charm.unit.status.message)
+
+    @patch("charm.subprocess.run")
+    def test_migrate_schema_bootstrap_connection_error(self, mock_run):
+        """Test bootstrap connection error with specific status."""
+        error = CalledProcessError(1, [SCHEMA_SCRIPT, "--bootstrap"])
+        error.stderr = "could not connect to database: Connection refused"
+        mock_run.side_effect = error
+
+        result = self.harness.charm._migrate_schema_bootstrap()
+
+        self.assertFalse(result)
+        self.assertIsInstance(self.harness.charm.unit.status, BlockedStatus)
+        self.assertIn("connection error", self.harness.charm.unit.status.message)

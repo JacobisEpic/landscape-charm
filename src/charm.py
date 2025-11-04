@@ -957,16 +957,39 @@ class LandscapeServerCharm(CharmBase):
             call.extend(self._proxy_settings)
 
         try:
-            check_call(call, env=get_modified_env_vars())
+            result = subprocess.run(
+                call, 
+                check=True, 
+                text=True, 
+                capture_output=True,
+                env=get_modified_env_vars()
+            )
+            logger.info(f"Schema bootstrap completed successfully")
+            if result.stdout:
+                logger.debug(f"Bootstrap output: {result.stdout}")
+            
             self._bootstrap_account()
             self._set_autoregistration()
             return True
         except CalledProcessError as e:
-            logger.error(
-                "Landscape Server schema update failed with return code %d",
-                e.returncode,
-            )
-            self.unit.status = BlockedStatus("Failed to update database schema")
+            # Build detailed error message for bootstrap failure
+            error_parts = [f"Schema bootstrap failed with return code {e.returncode}"]
+            
+            if e.stdout:
+                error_parts.append(f"Output: {e.stdout.strip()}")
+            if e.stderr:
+                error_parts.append(f"Error: {e.stderr.strip()}")
+            
+            detailed_error = " | ".join(error_parts)
+            logger.error(detailed_error)
+            
+            # Provide more specific status message
+            if e.returncode == 1 and e.stderr and "permission" in e.stderr.lower():
+                self.unit.status = BlockedStatus("Database permission error during schema bootstrap")
+            elif e.returncode == 1 and e.stderr and "connect" in e.stderr.lower():
+                self.unit.status = BlockedStatus("Database connection error during schema bootstrap")
+            else:
+                self.unit.status = BlockedStatus("Failed to update database schema")
 
     def _update_wsl_distributions(self) -> bool | None:
         logger.info("Updating WSL distributions...")
@@ -1599,6 +1622,48 @@ command[check_{service}]=/usr/local/lib/nagios/plugins/check_systemd.py {service
 
         self.unit.status = prev_status
 
+    def _validate_migration_prerequisites(self, event: ActionEvent) -> bool:
+        """Validate prerequisites before attempting schema migration."""
+        checks = []
+        
+        # Check if schema script exists
+        if not os.path.exists(SCHEMA_SCRIPT):
+            event.fail(f"Schema script not found: {SCHEMA_SCRIPT}")
+            return False
+        checks.append(f"✓ Schema script: {SCHEMA_SCRIPT}")
+        
+        # Check database relation
+        db_relation = self.model.get_relation("database") or self.model.get_relation("db")
+        if not db_relation:
+            event.fail("No database relation found. Please relate to PostgreSQL charm.")
+            return False
+        checks.append("✓ Database relation active")
+        
+        # Log all checks
+        event.log("Pre-migration validation:\n" + "\n".join(checks))
+        return True
+
+    def _get_migration_troubleshooting_hints(self, return_code: int, stderr: str) -> str:
+        """Provide specific troubleshooting guidance based on error patterns."""
+        hints = []
+        
+        if return_code == 1:
+            if stderr and "permission denied" in stderr.lower():
+                hints.append("Check database user permissions")
+            elif stderr and "connection" in stderr.lower():
+                hints.append("Verify database relation is active: juju status --relations")
+            elif stderr and ("disk" in stderr.lower() or "space" in stderr.lower()):
+                hints.append("Check available disk space on database server")
+        
+        if stderr and "authentication" in stderr.lower():
+            hints.append("Check database credentials in relation data")
+        
+        if not hints:
+            hints.append("Check 'juju debug-log' for more details")
+            hints.append("Verify database relation: juju show-unit landscape-server/0")
+        
+        return "; ".join(hints)
+
     def _migrate_schema(self, event: ActionEvent) -> None:
         if self._stored.running:
             event.fail(
@@ -1607,17 +1672,45 @@ command[check_{service}]=/usr/local/lib/nagios/plugins/check_systemd.py {service
             )
             return
 
+        # Run pre-flight validation
+        if not self._validate_migration_prerequisites(event):
+            return
+
         prev_status = self.unit.status
         self.unit.status = MaintenanceStatus("Migrating schemas...")
         event.log("Running schema migration...")
 
         try:
-            subprocess.run(
-                [SCHEMA_SCRIPT], check=True, text=True, env=get_modified_env_vars()
+            result = subprocess.run(
+                [SCHEMA_SCRIPT], 
+                check=True, 
+                text=True, 
+                capture_output=True,  # Capture both stdout and stderr
+                env=get_modified_env_vars()
             )
+            # Log successful output
+            if result.stdout:
+                event.log(f"Migration output: {result.stdout}")
+            event.log("Schema migration completed successfully")
+            
         except CalledProcessError as e:
-            logger.error("Schema migration failed with error code %s", e.returncode)
-            event.fail(f"Schema migration failed with error code {e.returncode}")
+            # Build detailed error message
+            error_parts = [f"Schema migration failed with exit code {e.returncode}"]
+            
+            if e.stdout:
+                error_parts.append(f"Output: {e.stdout.strip()}")
+            if e.stderr:
+                error_parts.append(f"Error: {e.stderr.strip()}")
+                
+            detailed_error = "\n".join(error_parts)
+            
+            # Provide troubleshooting hints based on common issues
+            hints = self._get_migration_troubleshooting_hints(e.returncode, e.stderr or "")
+            if hints:
+                detailed_error += f"\n\nTroubleshooting: {hints}"
+            
+            logger.error(detailed_error)
+            event.fail(detailed_error)
             self.unit.status = BlockedStatus("Failed schema migration")
         else:
             self.unit.status = prev_status
