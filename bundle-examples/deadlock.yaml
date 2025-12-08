@@ -1,7 +1,7 @@
 description: Landscape Scalable Dev with Charmed PostgreSQL 16
 applications:
   postgresql:
-    channel: 14/stable
+    channel: 16/stable
     charm: ch:postgresql
     num_units: 1
     options:
