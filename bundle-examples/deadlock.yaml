@@ -39,4 +39,4 @@ relations:
   - [landscape-server:inbound-amqp, rabbitmq-server]
   - [landscape-server:outbound-amqp, rabbitmq-server]
   - [landscape-server, haproxy]
-  - [landscape-server:database, postgresql:database]
+  - [landscape-server:db, postgresql:db-admin]
