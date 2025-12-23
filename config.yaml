@@ -241,3 +241,10 @@ options:
       an HAProxy frontend will be created to route traffic to the Ubuntu installer
       attach backend services. The backend services will be installed and uninstalled
       automatically.
+  fail_fast_on_invalid_config:
+    type: boolean
+    default: false
+    description: |
+      If true, the charm will block on invalid configuration without falling back
+      to defaults. When false (default), the charm uses default configuration as
+      a fallback when validation fails.
